@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #define MAX_NUM 10
-int num=0;
 typedef struct {
     void (*func)(void*);
     void* arg;
@@ -74,7 +73,7 @@ void task_add(Task task){
     pthread_mutex_unlock(&pool->queue.mutex);
 }
 void *juzhen(void *arg){
-     num = *(int*)arg;
+    int num = *(int*)arg;
     long long ret;
     ret = num * num;
     printf("线程%d计算%d的平方等于%lld\n", pthread_self(), num, ret);
@@ -108,5 +107,4 @@ int main(){
     add_juzhen();
     usleep(1000);
     Close();
-    fflush(stdout);
 }

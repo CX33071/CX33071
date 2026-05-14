@@ -1,10 +1,12 @@
 #include <unistd.h>
 #include <condition_variable>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <mutex>
 #include <thread>
 #include <vector>
+#include <queue>
 const int MAX_NUM = 10;
 std::mutex cout_mutex;
 std::mutex order_mutex;
@@ -135,4 +137,64 @@ int main() {
     add_juzhen(pool);
     usleep(10000);
     pool.close();
+}
+class Threadpool {
+   public:
+    Threadpool(size_t num = std::thread::hardware_concurrency());
+    ~Threadpool();
+    void addtask(std::function<void()> task);
+
+   private:
+    void work();
+
+    bool stop_ = false;
+    std::mutex mutex_;
+    std::condition_variable cond_;
+    std::queue<std::function<void()>> tasks_;
+    std::vector<std::thread> threads_;
+};
+Threadpool::Threadpool(size_t num) {
+    if (num == 0) {
+        num = 4;
+    }
+    for (size_t i = 0; i < num; ++i) {
+        threads_.emplace_back(&Threadpool::work, this);
+    }
+}
+
+Threadpool::~Threadpool() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stop_ = true;
+    }
+    cond_.notify_all();
+    for (auto& t : threads_) {
+        if (t.joinable()) {
+            t.join();
+        }
+    }
+}
+
+void Threadpool::addtask(std::function<void()> task) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        tasks_.push(std::move(task));
+    }
+    cond_.notify_one();
+}
+
+void Threadpool::work() {
+    while (true) {
+        std::function<void()> task;
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+            cond_.wait(lock, [this]() { return stop_ || !tasks_.empty(); });
+            if (stop_ && tasks_.empty()) {
+                return;
+            }
+            task = std::move(tasks_.front());
+            tasks_.pop();
+        }
+        task();
+    }
 }

@@ -150,5 +150,237 @@ public:
 };
 ```
 
+### 二、`std::function`
 
+##### 作用：把一切可调用对象(函数，`lambda`，仿函数，绑定器)统一包装成同一种类型，方便存储传递回调，是万能函数包装器，可以理解成一个函数指针
+
+##### 语法：
+
+```c++
+// 格式
+std::function<返回值(参数列表)> 变量名;
+// 例子：包装一个返回int、参数是int,int的可调用对象
+std::function<int(int, int)> func;
+```
+
+##### 示例：
+
+1.包装普通函数：
+
+```c++
+#include <iostream>
+#include <functional>
+using namespace std;
+int add(int a, int b) { return a + b; }
+int main() {
+    function<int(int, int)> f = add;
+    cout << f(2, 3) << endl;  // 输出 5
+}
+```
+
+2.包装`lambda`
+
+```c++
+function<int(int, int)> f = [](int a, int b) {
+    return a * b;
+};
+cout << f(2, 3);  // 6
+```
+
+3.配合`bind`包装成员函数
+
+```c++
+Test t;
+function<int(int)> f = bind(&Test::show, &t, placeholders::_1);
+cout << f(5);  // 50
+```
+
+##### 用途：
+
+1.实现回调函数
+
+```c++
+void run(function<void()> callback) {//参数是可调用对象
+    callback();  // 调用回调
+}
+int main() {
+    run([]() { cout << "回调执行\n"; });
+}
+```
+
+2.把不同可调用对象存入同一容器
+
+```c++
+vector<function<int(int, int)>> vec;
+vec.push_back(add);
+vec.push_back([](int a,int b){return a-b;});
+```
+
+3.实现状态机、策略模式、事件分发
+
+状态机：
+
+```c++
+#include <iostream>
+#include <functional>
+using namespace std;
+// 状态枚举
+enum State { IDLE, RUN, STOP };
+class StateMachine {
+public:
+    // 当前状态执行函数
+    function<void()> curState;
+    // 切换状态
+    void switchState(State s) {
+        switch (s) {
+            case IDLE: curState = [this](){ idle(); }; break;
+            case RUN:  curState = [this](){ run(); };  break;
+            case STOP: curState = [this](){ stop(); }; break;
+        }
+    }
+    // 每一帧执行当前状态
+    void update() {
+        if(curState) curState();
+    }
+private:
+    void idle()  { cout << "空闲状态\n"; }
+    void run()   { cout << "运行状态\n"; }
+    void stop()  { cout << "停止状态\n"; }
+};
+int main() {
+    StateMachine sm;
+    sm.switchState(IDLE);
+    sm.update();
+    sm.switchState(RUN);
+    sm.update();
+    sm.switchState(STOP);
+    sm.update();
+    return 0;
+}
+```
+
+事件分发：
+
+```c++
+#include <iostream>
+#include <functional>
+#include <vector>
+#include <unordered_map>
+using namespace std;
+// 事件分发器
+class EventDispatcher {
+public:
+    // 事件回调：携带int参数
+    using EventCb = function<void(int)>;
+    unordered_map<int, vector<EventCb>> eventMap;
+    // 绑定事件
+    void on(int eventId, EventCb cb) {
+        eventMap[eventId].push_back(cb);
+    }
+    // 触发事件
+    void emit(int eventId, int msg) {
+        if(!eventMap.count(eventId)) return;
+        for(auto &cb : eventMap[eventId]) {
+            cb(msg);
+        }
+    }
+};
+int main() {
+    EventDispatcher ed;
+    // 绑定事件1001
+    ed.on(1001, [](int val){
+        cout << "模块A收到：" << val << endl;
+    });
+    ed.on(1001, [](int val){
+        cout << "模块B收到：" << val*2 << endl;
+    });
+    // 触发事件
+    ed.emit(1001, 666);
+    return 0;
+}
+```
+
+##### 特性：
+
+1.空检查：
+
+```c++
+function<void()> f;
+if(!f){}//判断是否为空
+```
+
+2.可以像普通函数一样调用
+
+```c++
+f();
+```
+
+3.与函数指针的区别：
+
+| 对比维度                | 函数指针 | std::function  |
+| ----------------------- | -------- | -------------- |
+| 可装普通全局 / 静态函数 | ✅        | ✅              |
+| 可装 Lambda（带捕获）   | ❌        | ✅              |
+| 可装仿函数 /std::bind   | ❌        | ✅              |
+| 可装类非静态成员函数    | ❌        | ✅              |
+| 统一类型存容器          | ❌        | ✅              |
+| 保存调用状态            | ❌        | ✅              |
+| 安全判空                | ❌ 易崩溃 | ✅ 可判断       |
+| 运行开销                | 极低     | 略高（可忽略） |
+| C++ 版本                | 原生就有 | C++11 起       |
+
+##### 手写简易`function`
+
+1.抽象基类(提供统一接口)
+
+```c++
+template<typename Ret,typename... Args>//...表示一包参数，返回值Ret，这个基类能适配任意返回值+任意参数的函数
+struct FuncBase{
+virtual ~FuncBase()=default;//虚析构函数，先调子类析构再调基类析构，不加的话delete基类指针只会调用基类析构，子类内存泄漏，编译器自动生成默认实现
+virtual Ret invoke(Args&&,,, args)=0;//=0表示这个函数没有实现，强制子类必须实现它
+};
+```
+
+2.模板派生类
+
+```c++
+// 包装具体可调用对象
+template<typename Ret, typename... Args, typename F>//F真正的可调用对象
+struct FuncImpl : FuncBase<Ret, Args...>
+{
+    F func;  // 存 lambda/函数/仿函数等可调用对象的地方
+
+    FuncImpl(F f) : func(std::move(f)) {}//std::move避免拷贝
+
+    // 虚函数转发调用
+    Ret invoke(Args&&... args) override {//override显式声明是重写虚函数
+        return func(std::forward<Args>(args)...);//std::forward完美转发，保持参数的左值右值属性，不拷贝、不修改类型，原汁原味把参数传给内部参数
+    }
+};
+
+```
+
+3.实现自己的`function`
+
+```c++
+template<typename Ret, typename... Args>
+class MyFunction
+{
+private:
+    // 持有抽象基类指针，隐藏真实类型
+    FuncBase<Ret, Args...>* ptr = nullptr;
+public:
+    // 接收任意可调用对象
+    template<typename F>
+    MyFunction(F&& f) {//&&万能指针能接受左值右值lambda函数指针
+        // 派生类装真实对象，基类指针指向它
+        ptr = new FuncImpl<Ret, Args..., F>(std::forward<F>(f));
+    }
+    // 重载 () 对外统一调用
+    Ret operator()(Args... args) {
+        return ptr->invoke(std::forward<Args>(args)...);
+    }
+    ~MyFunction() { delete ptr; }
+};
+```
 

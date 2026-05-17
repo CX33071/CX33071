@@ -384,3 +384,168 @@ public:
 };
 ```
 
+### 三、`std::move`
+
+##### 作用：
+
+单纯做类型强转，把任意一个变量强制转为右值引用&&，不移动数据，只是告诉编译器可以偷资源，真正移动数据的是移动构造函数
+
+```c++
+template <typename T>
+typename remove_reference<T>::type&& move(T&& t) {
+    return static_cast<typename remove_reference<T>::type&&>(t);
+}//就是一个强制类型转换
+```
+
+##### 右值引用&&
+
+专门用来绑定临时对象实现移动语义
+
+右值引用和普通变量的区别？
+
+`int a=10`的10编译器会在栈上开辟一块独立内存存10,变量a持有这块内存，生命周期由`a`决定，`int&&a=10;`的10是临时右值，不会额外开新内存存10,用完直接销毁
+
+##### 用法
+
+1.移动对象，避免拷贝
+
+```c++
+string s1 = "hello world";
+string s2 = s1;           // 拷贝，慢
+string s3 = move(s1);    // 移动，快！
+```
+
+这也是为什么发明右值引用的原因：
+
+老式C++痛点：完整拷贝内存，数据复制一遍，效率低
+
+右值引用：把`s1`的内存资源直接转移给`s3`，`s1`变空，另拷贝极速完成
+
+编译器看到右值优先调用移动构造函数，移动构造函数内部做指针交换
+
+### 四、`std::forward`
+
+##### 作用：
+
+完美转发，把参数的属性(左值右值)完封不动转发给下一个函数
+
+##### 为什么需要`std::forward`
+
+```c++
+template<typename T>
+void func(T&& t) {
+    other_func(t);  // 这里 t 永远变成了 左值！
+}
+```
+
+即使你传入右值，进入函数后，`t` 有名字了 ，变成左值导致右值属性丢失，无法触发移动语义！
+
+### 五、`std::future`
+
+##### 为什么需要`std::futrue`类?
+
+`std::futrue`是用来获取异步线程的返回值和异常的，是主线程和子线程之间的结果传递通道
+
+一个子线程干完活想把结果告诉主线程，怎么传？需要用到`std::futrue`
+
+`std::future`就是异步任务的结果提货单，拿着单子等线程跑完，再取返回值
+
+##### 特性：
+
+1.`.get()`只能调用一次，一个`future`只能获取一次结果，取完失效，`get()`会阻塞当前线程，直到异步任务完成
+
+2.`bool vaild()`判断当前`future`是否还持有结果
+
+3.`void wait()`只等待完成，不获取结果
+
+4.`wait_for(时间段)`超时等待，不卡死线程
+
+5.`share()`转为`shared_future`,允许多个线程同时获取结果，调用多次`.get()`
+
+##### `std::async`:本质模板函数，发起异步任务返回一个`future`，`future`对象.get()，取任务返回值，等于高级版`thread`，自动管理不用`join`
+
+```c++
+// async 是函数，调用它
+auto ft = std::async(func);
+
+// ft 是 future 类实例，.get() 是它的成员函数
+int res = ft.get();
+```
+
+##### `std::packaged_task`:是一个模板类，包装可调用对象的包装器，把函数和`future`绑定在一起，包装一函数，执行任务后结果自动放进`future`,可以手动控制什么时候执行任务
+
+核心三步骤：创建`packaged_task`包装你的函数，从它身上取出`future`,调用`task()`执行任务，`future.get()`拿结果
+
+```c++
+#include <iostream>
+#include <future>
+using namespace std;
+
+int add(int a, int b) {
+    return a + b;
+}
+
+int main() {
+    // 1. 创建 packaged_task，包装函数
+    packaged_task<int(int, int)> task(add);
+
+    // 2. 取出 future
+    future<int> fu = task.get_future();
+
+    // 3. 执行任务（手动调用）
+    task(10, 20);
+
+    // 4. 拿结果
+    cout << fu.get() << endl;  // 30
+}
+
+```
+
+`async`和`packaged_task`最大的区别：`async`是自动执行，`packaged_task`必须手动调动`task()`才可以
+
+##### `std::promise+std::future`:
+
+`std::promise<T>`：生产者，主动存值、发数据`std::future<T>`：消费者，等待取值、拿数据
+
+```c++
+#include <iostream>
+#include <thread>
+#include <future>
+using namespace std;
+
+void setData(promise<int> pro)
+{
+    // 延迟模拟耗时操作
+    this_thread::sleep_for(chrono::seconds(1));
+    pro.set_value(666); // 存入数据
+}
+
+int main()
+{
+    promise<int> p;
+    future<int> f = p.get_future(); // 绑定成对
+
+    thread t(setData, move(p)); // 移动语义传promise
+
+    cout << "等待子线程赋值...\n";
+    int res = f.get(); // 阻塞等待，拿到值才继续
+    cout << "收到值：" << res << endl;//res=666
+
+    t.join();
+    return 0;
+}
+
+```
+
+二者成对绑定，跨线程传值 / 传结果
+
+| 组件                   | 角色                      | 使用场景               | 执行方式             |
+| ---------------------- | ------------------------- | ---------------------- | -------------------- |
+| `promise+future`       | 主动发值 + 等待收值       | 线程间**手动传递数据** | 手动 set_value 发    |
+| `packaged_task+future` | 包装函数 + 获取函数返回值 | 线程池封装任务         | 调用任务自动回填结果 |
+| `async+future`         | 一键异步执行              | 简单异步任务           | 自动开线程执行       |
+
+
+
+
+

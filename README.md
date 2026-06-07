@@ -1,7 +1,7 @@
 ### Hi there 👋 I'm CX33071
 
-- 🔭 I’m currently working on **Linux C++ backend development**
-- 🌱 I’m learning **Epoll, Reactor model and FTP protocol**
+- 🔭 I'm a passionate developer focusing on backend development, Linux server-side programming
+- 🌱 Keep coding, keep improving.
 
 ## 🐍 GitHub Contribution Snake
 <p align="center">
